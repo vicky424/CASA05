@@ -1,0 +1,9 @@
+---
+title: "hw4"
+format: html
+editor: visual
+---
+
+```{r}
+1 + 1
+```
