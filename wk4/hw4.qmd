@@ -4,6 +4,70 @@ format: html
 editor: visual
 ---
 
+# Load Data读取数据
 ```{r}
-1 + 1
+#空间数据
+library(sf)
+World <- st_read("../wk4/World_Countries_(Generalized)_9029012925078512962.geojson")
+World
+```
+
+```{r}
+#GII数据
+library(readr)
+library(janitor)
+hdr_data <- read_csv("../wk4/hdr-data.csv")
+hdr_data <- hdr_data %>% 
+  clean_names()
+hdr_data
+```
+
+# Data Selection数据筛选
+```{r}
+library(dplyr)
+GII <- hdr_data %>%
+  filter(index_code == "GII"& indicator_code == "gii")
+GII
+```
+
+# Data Processing数据处理
+## Transform to Wide Format转换为宽数据
+```{r}
+library(dplyr)
+library(tidyr)
+#2010和2019年的数据各为一列
+GII_wide <- GII %>%
+  pivot_wider(names_from = year, values_from = value, names_prefix = "year_")
+GII_wide
+```
+
+## Calculate GII Difference计算GII差值
+```{r}
+GII_diff <- GII_wide %>%
+  mutate(value_diff = year_2010 - year_2019)
+GII_diff
+```
+
+# Merge Data合并数据
+```{r}
+library(dplyr)
+library(sf)
+
+World_diff <- World %>%  #World作为主数据
+  left_join(GII_diff, by = c("COUNTRY" = "country"))  #合并GII_diff
+print(World_diff)
+```
+
+# Plot绘图
+```{r}
+library(ggplot2)
+library(sf)
+library(colorspace)
+
+ggplot(data = World_diff) +
+  geom_sf(aes(fill = value_diff), color = "black") +  # 使用 diff列填充颜色，边界线为黑色
+  scale_fill_continuous_sequential(palette = "YlGnBu", rev = FALSE, na.value = NA) +  #设置填充颜色条
+  labs(title = "GII Difference (2019 vs 2010)",
+       fill = "Difference (2019-2010)") +      
+  theme(plot.title = element_text(hjust = 0.5))  #标题居中
 ```
