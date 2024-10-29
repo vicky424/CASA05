@@ -5,6 +5,7 @@ editor: visual
 ---
 
 # Load Data读取数据
+
 ```{r}
 #空间数据
 library(sf)
@@ -16,58 +17,66 @@ World
 #GII数据
 library(readr)
 library(janitor)
-hdr_data <- read_csv("../wk4/hdr-data.csv")
+hdr_data <- read_csv("../wk4/HDR23-24_Composite_indices_complete_time_series.csv")
 hdr_data <- hdr_data %>% 
   clean_names()
 hdr_data
 ```
 
 # Data Selection数据筛选
+
 ```{r}
 library(dplyr)
 GII <- hdr_data %>%
-  filter(index_code == "GII"& indicator_code == "gii")
+  select(iso3,country,region,gii_2010, gii_2019)
 GII
 ```
 
 # Data Processing数据处理
-## Transform to Wide Format转换为宽数据
-```{r}
-library(dplyr)
-library(tidyr)
-#2010和2019年的数据各为一列
-GII_wide <- GII %>%
-  pivot_wider(names_from = year, values_from = value, names_prefix = "year_")
-GII_wide
-```
-
 ## Calculate GII Difference计算GII差值
+
 ```{r}
-GII_diff <- GII_wide %>%
-  mutate(value_diff = year_2010 - year_2019)
-GII_diff
+GII <- GII %>%
+  mutate(gii_diff = gii_2010 - gii_2019)
+GII
+```
+## 加载World国家代码
+```{r}
+library(countrycode)
+library(dplyr)
+World <- World %>%
+  mutate(iso3 = countrycode(COUNTRY, origin = "country.name", destination = "iso3c"))
+World
 ```
 
 # Merge Data合并数据
+
 ```{r}
 library(dplyr)
 library(sf)
 
 World_diff <- World %>%  #World作为主数据
-  left_join(GII_diff, by = c("COUNTRY" = "country"))  #合并GII_diff
+  left_join(GII, by = c("iso3" = "iso3"))  #合并GII_diff
 print(World_diff)
 ```
 
 # Plot绘图
+
 ```{r}
 library(ggplot2)
 library(sf)
-library(colorspace)
+library(RColorBrewer) 
 
 ggplot(data = World_diff) +
-  geom_sf(aes(fill = value_diff), color = "black") +  # 使用 diff列填充颜色，边界线为黑色
-  scale_fill_continuous_sequential(palette = "YlGnBu", rev = FALSE, na.value = NA) +  #设置填充颜色条
-  labs(title = "GII Difference (2019 vs 2010)",
-       fill = "Difference (2019-2010)") +      
-  theme(plot.title = element_text(hjust = 0.5))  #标题居中
+  geom_sf(aes(fill = cut(gii_diff,breaks = c(-Inf,-0.3, -0.1, 0.0, 0.1, 0.3, 0.5, Inf))), color = "black") + 
+  scale_fill_manual(
+    values = brewer.pal(7, "YlGnBu"),
+    name = "GII Difference between 2010-2019",
+    labels = c("< -0.3", "-0.3 to -0.1", "-0.1 to 0.0", "0.0 to 0.1", "0.1 to 0.3", "0.3 to 0.5", "> 0.5"),
+    na.value = NA) + 
+  labs(title = "Difference in GII Index 2010-2019") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5)  # 标题居中
+  )
 ```
