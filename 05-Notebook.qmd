@@ -1,0 +1,213 @@
+---
+title: "05-Notebook"
+format: html
+editor: visual
+---
+
+# 数据读取
+## 读取csv
+```{r}
+library(readr)
+data <- read_csv("file_path.csv")
+
+# 如果是在project下读取可以省略project文件夹及之前的路径
+data <- read.csv("../wk4/LondonData.csv")
+```
+
+## 读取空间数据（GeoPackage、Shapefile、GeoJSON 等）
+```{r}
+library(sf)
+geo_data <- st_read("path/to/your/file.geojson")
+```
+
+## 读取tif
+```{r}
+library(terra)
+raster_data <- rast("path/to/your/file.tif")
+```
+
+# 空间数据的坐标系
+## 检查坐标系
+```{r}
+library(sf)
+crs_info <- st_crs(shapefile)
+print(crs_info)
+```
+
+## 添加坐标系
+```{r}
+library(sf)
+shapefile <- st_set_crs(shapefile, 4326)
+```
+
+## 转换为投影坐标系
+```{r}
+# 矢量数据
+library(sf)
+shapefile_projected <- st_transform(shapefile, 4326)
+
+# 栅格数据
+library(terra)
+raster_projected <- project(raster_data, "EPSG:4326")
+```
+
+# 数据筛选
+## 按行筛选
+```{r}
+selected_rows <- data[626:658,]
+# or
+selected_rows <- data[c(1, 3, 5), ] # 行筛选逗号在后
+```
+
+## 按列筛选
+```{r}
+selected_cols<- data[, c(1, 3, 5)] # 列筛选逗号在前
+```
+## 按列值筛选
+```{r}
+library(dplyr)
+# 单一条件筛选
+filtered_data <- data %>% 
+  filter(age > 30)
+
+# 多条件筛选
+filtered_data <- data %>% 
+  filter(
+    county != 'Multiple',
+    organization_level == 'School',
+    test_subject == "Science",
+    grade_level == 'All Grades'
+  )
+
+#匹配的字符串数据筛选（查找new code以E09开头的数据）
+library(dplyr)
+library(stringr)
+
+filtered_data <- data %>%
+  filter(str_detect(new_code, "^E09"))
+```
+
+## 重命名列
+```{r}
+library(janitor)
+library(dplyr)
+
+df <- df %>%
+  dplyr::rename(
+    new_name1 = old_name1,
+    new_name2 = old_name2
+  )
+
+# 清理列名
+df_clean <- df %>% 
+  clean_names()
+```
+
+## 查看某列数据类型
+```{r}
+class(data$column_name)
+```
+
+# 数据计算
+## 按相同属性统计数据
+```{r}
+library(dplyr)
+
+# 按 category 分组并汇总 value 列的总和并计算平均值
+summarized_data <- data %>%
+  group_by(category) %>%
+  summarize(
+    total_value = sum(value, na.rm = TRUE),
+    avg_value = mean(value, na.rm = TRUE)
+  )
+```
+
+## 比例计算
+### 按某个分组计算比例
+```{r}
+library(dplyr)
+
+data <- data %>%
+  group_by(category) %>%
+  mutate(proportion = value / sum(value, na.rm = TRUE))
+```
+### 计算某两列数据比值
+```{r}
+library(dplyr)
+
+data <- data %>%
+  mutate(ratio = value1 / value2)
+```
+
+# 合并数据
+## 使用left_join()
+```{r}
+library(dplyr)
+# 保留左侧数据框的所有行，并合并右侧匹配的行
+merged_data <- left_join(df1, df2, by = "key")
+```
+
+## 使用merge()
+```{r}
+# 只保留键值匹配的行
+merged_data <- merge(df1, df2, by = "key")
+```
+
+# 绘图
+## tmap绘图模板
+```{r}
+# 加载必要的包
+library(tmap)
+library(sf)
+
+# 确定绘图模式
+tmap_mode("plot")  # "view" 为交互式，"plot" 为静态模式
+
+# 创建并绘制地图
+map <- tm_shape(shapefile) +
+  tm_polygons(
+    col = "population",          # 填充颜色基于 "population" 列
+    palette = "Blues",           # 使用蓝色调色板
+    border.col = "black",        # 边界颜色
+    border.alpha = 0.7,         # 边界透明度
+    lwd = 1,                    # 边界线宽
+    alpha = 0.8,                # 填充透明度
+    title = "Population Density" # 图例标题
+  ) +
+  tm_compass(type = "arrow", position = c("left", "top")) +  # 添加指北针，左上角
+  tm_scale_bar(position = c("left", "bottom")) +   # 添加比例尺，左下角
+  tm_layout(
+    title = "Population Map",   # 地图标题
+    legend.outside = TRUE       # 将图例放置在地图外
+  )
+
+```
+
+## ggplot2绘图模板
+```{r}
+# 加载必要的包
+library(ggplot2)
+
+# 绘图模板
+p <- ggplot(df, aes(x = category, y = value)) +  # 初始化图形，指定数据和美学映射
+  geom_boxplot(fill = "lightblue", color = "black") +  # 绘制箱线图，geom_bar()绘制柱状图，geom_histogram绘制直方图
+  labs(
+    title = "Boxplot of Values by Category",      # 图标题
+    x = "Category",                               # x 轴标题
+    y = "Value",                                  # y 轴标题
+    caption = "Data source: Example dataset"      # 图形说明
+  ) +
+  theme_minimal() +  # 使用主题
+  theme(
+    plot.title = element_text(hjust = 0.5),       # 标题居中
+    axis.text.x = element_text(angle = 45, hjust = 1)  # x 轴标签旋转
+  )
+
+# 显示图形
+print(p)
+```
+
+
+
+
+
