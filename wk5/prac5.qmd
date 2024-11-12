@@ -8,7 +8,7 @@ editor: visual
 
 ```{r}
 library(sf)
-
+#
 Londonborough <- st_read(here::here("wk5","statistical-gis-boundaries-london", "ESRI", "London_Borough_Excluding_MHW.shp"))%>%
   st_transform(., 27700) #英国国家坐标系（British National Grid）的 EPSG 代码
 ```
