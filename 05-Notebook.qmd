@@ -5,7 +5,9 @@ editor: visual
 ---
 
 # 数据读取
+
 ## 读取csv
+
 ```{r}
 library(readr)
 data <- read_csv("file_path.csv")
@@ -14,20 +16,31 @@ data <- read_csv("file_path.csv")
 data <- read.csv("../wk4/LondonData.csv")
 ```
 
+### 读取点csv后转换为空间数据
+```{r}
+data <- read_csv("../file_path.csv") %>%
+  st_as_sf(., coords = c("longitude", "latitude"), 
+                   crs = 4326) %>% # 默认WGS84坐标系
+```
+
 ## 读取空间数据（GeoPackage、Shapefile、GeoJSON 等）
+
 ```{r}
 library(sf)
 geo_data <- st_read("path/to/your/file.geojson")
 ```
 
 ## 读取tif
+
 ```{r}
 library(terra)
 raster_data <- rast("path/to/your/file.tif")
 ```
 
 # 空间数据的坐标系
+
 ## 检查坐标系
+
 ```{r}
 library(sf)
 crs_info <- st_crs(shapefile)
@@ -35,12 +48,14 @@ print(crs_info)
 ```
 
 ## 添加坐标系
+
 ```{r}
 library(sf)
 shapefile <- st_set_crs(shapefile, 4326)
 ```
 
 ## 转换为投影坐标系
+
 ```{r}
 # 矢量数据
 library(sf)
@@ -52,7 +67,9 @@ raster_projected <- project(raster_data, "EPSG:4326")
 ```
 
 # 数据筛选
+
 ## 按行筛选
+
 ```{r}
 selected_rows <- data[626:658,]
 # or
@@ -60,10 +77,13 @@ selected_rows <- data[c(1, 3, 5), ] # 行筛选逗号在后
 ```
 
 ## 按列筛选
+
 ```{r}
 selected_cols<- data[, c(1, 3, 5)] # 列筛选逗号在前
 ```
+
 ## 按列值筛选
+
 ```{r}
 library(dplyr)
 # 单一条件筛选
@@ -88,6 +108,7 @@ filtered_data <- data %>%
 ```
 
 ## 重命名列
+
 ```{r}
 library(janitor)
 library(dplyr)
@@ -104,12 +125,15 @@ df_clean <- df %>%
 ```
 
 ## 查看某列数据类型
+
 ```{r}
 class(data$column_name)
 ```
 
 # 数据计算
+
 ## 按相同属性统计数据
+
 ```{r}
 library(dplyr)
 
@@ -123,7 +147,9 @@ summarized_data <- data %>%
 ```
 
 ## 比例计算
+
 ### 按某个分组计算比例
+
 ```{r}
 library(dplyr)
 
@@ -131,7 +157,9 @@ data <- data %>%
   group_by(category) %>%
   mutate(proportion = value / sum(value, na.rm = TRUE))
 ```
+
 ### 计算某两列数据比值
+
 ```{r}
 library(dplyr)
 
@@ -140,21 +168,37 @@ data <- data %>%
 ```
 
 # 合并数据
-## 使用left_join()
+
+## 基于键值匹配
+### 使用left_join()
+
 ```{r}
 library(dplyr)
 # 保留左侧数据框的所有行，并合并右侧匹配的行
 merged_data <- left_join(df1, df2, by = "key")
 ```
 
-## 使用merge()
+### 使用merge()
+
 ```{r}
 # 只保留键值匹配的行
 merged_data <- merge(df1, df2, by = "key")
 ```
 
+## 基于空间关系
+### 使用st_join()左连接
+```{r}
+# 默认相交st_intersects
+result <- st_join(cities_sf, regions_sf)
+
+# 改为包含st_within
+result <- st_join(cities_sf, regions_sf, join = st_within)
+```
+
 # 绘图
+
 ## tmap绘图模板
+
 ```{r}
 # 加载必要的包
 library(tmap)
@@ -184,6 +228,7 @@ map <- tm_shape(shapefile) +
 ```
 
 ## ggplot2绘图模板
+
 ```{r}
 # 加载必要的包
 library(ggplot2)
@@ -206,8 +251,3 @@ p <- ggplot(df, aes(x = category, y = value)) +  # 初始化图形，指定数�
 # 显示图形
 print(p)
 ```
-
-
-
-
-

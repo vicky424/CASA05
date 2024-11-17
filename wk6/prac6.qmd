@@ -4,23 +4,381 @@ format: html
 editor: visual
 ---
 
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
+# 导入包
 ```{r}
-1 + 1
+library(spatstat)
+library(here)
+library(sp)
+library(tmap)
+library(sf)
+library(tmaptools)
+```
+# 读取数据
+## 读取空间边界数据
+```{r}
+LondonBoroughs <- st_read("D:/CASA/CASA05/CASA0005repo-master/wk1/statistical-gis-boundaries-london/ESRI/London_Borough_Excluding_MHW.shp")
+```
+### 边界绘图
+```{r}
+library(stringr)
+BoroughMap <- LondonBoroughs %>%
+  dplyr::filter(str_detect(GSS_CODE, "^E09"))%>%
+  st_transform(., 27700)
+
+qtm(BoroughMap)  # qtm是tamp中一个快速地图绘制函数
 ```
 
-You can add options to executable code like this
-
 ```{r}
-#| echo: false
-2 * 2
+summary(BoroughMap)
+```
+## 读取点数据
+```{r}
+BluePlaques <- st_read("https://s3.eu-west-2.amazonaws.com/openplaques/open-plaques-london-2018-04-08.geojson") %>%
+  st_transform(.,27700)
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+```{r}
+summary(BluePlaques)
+```
+### 将点数据绘制在地图上
+```{r}
+#plot the blue plaques in the city
+tmap_mode("plot")
+tm_shape(BoroughMap) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaques) +
+  tm_dots(col = "blue")
+```
+
+# 数据清理
+## 去除重复行
+```{r}
+library(tidyverse)
+library(sf)
+
+BluePlaques <- distinct(BluePlaques)
+```
+## 清除边界外的点数据
+### 空间子集：选择多边形内的点或多边形
+```{r}
+# 取交集数据
+# 默认拓扑关系为相交st_intersects（包含边界点），可以设置为其他拓扑关系
+# 例如BluePlaquesSub <- BluePlaques[BoroughMap, , op = st_within]（不包含边界点）
+BluePlaquesSub <- BluePlaques[BoroughMap,] 
+#check to see that they've been removed
+tmap_mode("plot")
+tm_shape(BoroughMap) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+```
+### 空间裁切：提取重叠或不重叠部分
+### 空间连接：将两个空间数据连接在一起
+```{r}
+# 数据读取
+OSM <- st_read("../wk5/greater-london-latest-free.shp/gis_osm_pois_a_free_1.shp") %>%
+  st_transform(., 27700) %>%
+  filter(fclass == 'hotel')
+```
+```{r}
+LondonBoroughs <- LondonBoroughs %>%
+  st_transform(., 27700)
+
+# 读取点数据并根据经纬度转换为空间数据
+Airbnb <- read_csv("../wk5/listings.csv") %>%
+  st_as_sf(., coords = c("longitude", "latitude"), 
+                   crs = 4326) %>%
+    st_transform(., 27700)%>%
+    #select entire places that are available all year
+    filter(room_type == 'Entire home/apt' & availability_365 =='365')
+
+# 定义一个函数用于空间连接
+Joinfun <- function(data1, data2) {
+  output <- data1 %>%
+    st_join(LondonBoroughs, .) %>%
+    # 创建列计算每个borough中的数量
+    add_count(GSS_CODE, name = "hotels_in_borough") 
+
+  return(output)
+}
+
+# 应用函数
+Hotels <- Joinfun(OSM, LondonBoroughs)
+Airbnb <- Joinfun(Airbnb, LondonBoroughs)
+
+# 聚合数据并保留唯一值
+Hotels <- Hotels %>%
+  #at the moment each hotel is a row for the borough
+  #we just one one row that has number of airbnbs
+  group_by(., GSS_CODE, NAME)%>%
+  summarise(`Accomodation count` = unique(hotels_in_borough))
+
+Airbnb <- Airbnb %>%
+  group_by(., GSS_CODE, NAME)%>%
+  summarise(`Accomodation count` = unique(hotels_in_borough))
+```
+
+```{r}
+# 空间连接Hotels与Airbnb
+all_accomodation <- st_join(Hotels, Airbnb, join = st_equals)# 空间完全重叠
+
+head(all_accomodation)
+```
+
+# 点模式分析
+## 研究数据准备
+### 选取研究区域
+```{r}
+# 选取一个区研究
+Harrow <- BoroughMap %>%
+  filter(., NAME=="Harrow")
+
+#Check to see that the correct borough has been pulled out
+tm_shape(Harrow) +
+  tm_polygons(col = NA, alpha = 0.5)
+```
+### 提取研究区内的点
+```{r}
+BluePlaquesSub <- BluePlaques[Harrow,]
+#check that it's worked
+tmap_mode("plot")
+```
+```{r}
+tm_shape(Harrow) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+```
+
+### 将Harrow转换为“观察窗口”用于后续分析
+```{r}
+window <- as.owin(Harrow)
+plot(window)
+```
+### 创建点模式（ppp）对象
+```{r}
+#先转换为sp对象，才可用spatstat分析
+#create a sp object
+BluePlaquesSub<- BluePlaquesSub %>%
+  as(., 'Spatial')
+
+#create a ppp object
+BluePlaquesSub.ppp <- ppp(x=BluePlaquesSub@coords[,1],
+                          y=BluePlaquesSub@coords[,2],
+                          window=window)
+```
+```{r}
+# 查看ppp对象
+BluePlaquesSub.ppp %>%
+  plot(.,pch=16,cex=0.5, 
+       main="Blue Plaques Harrow")
+```
+## 核密度分析
+```{r}
+BluePlaquesSub.ppp %>%
+  density(., sigma=500) %>% # sigma平滑参数，值越大，生成的密度图越平滑
+  plot()
+```
+
+```{r}
+BluePlaquesSub.ppp %>%
+  density(., sigma=1000) %>% # sigma平滑参数，值越大，生成的密度图越平滑
+  plot()
+```
+
+## 样方分析
+```{r}
+#First plot the points
+plot(BluePlaquesSub.ppp,
+     pch=16, # 指定绘制点为实心圆点
+     cex=0.5,  # 设置点的大小
+     main="Blue Plaques in Harrow") # 设置标题
+
+#now count the points in that fall in a 6 x 6
+#grid overlaid across the windowBluePlaquesSub.ppp2<-BluePlaquesSub.ppp %>%
+BluePlaquesSub.ppp %>%
+  quadratcount(.,nx = 6, ny = 6)%>% # 将空间划分为6×6网格
+    plot(., add=T, col="red") # 统计每个网格内的点数，用红色显示
+```
+```{r}
+# 将网格计数结果转换为数据框
+Qcount <- BluePlaquesSub.ppp %>%
+  quadratcount(.,nx = 6, ny = 6) %>%
+  as.data.frame() %>%
+  dplyr::count(Var1=Freq)%>% # 统计频数
+  dplyr::rename(Freqquadratcount=n) # 重命名
+```
+
+```{r}
+# 查看第一列数据类型
+Qcount %>% 
+  summarise_all(class)
+```
+
+```{r}
+# 基于泊松分布计算预期概率
+sums <- Qcount %>%
+  #calculate the total blue plaques (Var * Freq)
+  mutate(total = Var1 * Freqquadratcount) %>% # 计数×频率计算总数
+  dplyr::summarise(across(everything(), sum))%>% # 对所有列求和
+  dplyr::select(-Var1)  # 去除Var1列，只保留总数
+
+lambda<- Qcount%>%
+  #calculate lambda
+  mutate(total = Var1 * Freqquadratcount)%>%
+  dplyr::summarise(across(everything(), sum)) %>%
+  mutate(lambda=total/Freqquadratcount) %>%
+  dplyr::select(lambda)%>%
+  pull(lambda)
+```
+
+```{r}
+# 计算泊松分布概率
+QCountTable <- Qcount %>%
+  # 泊松分布公式
+  mutate(Pr=((lambda^Var1)*exp(-lambda))/factorial(Var1))%>%
+  # 计算期望值
+  #and save them to the table
+  mutate(Expected= (round(Pr * sums$Freqquadratcount, 0)))
+
+# 绘图将对比观测值与期望值
+plot(c(1,5),c(0,14), type="n", # 设置横纵轴范围
+xlab="Number of Blue Plaques (Red=Observed,Blue=Expected)", 
+     ylab="Frequency of Occurances")
+points(QCountTable$Freqquadratcount, 
+       col="Red",  # 红色代表观测值
+       type="o", 
+       lwd=3) # 设置线条宽度
+points(QCountTable$Expected, col="Blue",  # 蓝色代表期望值
+       type="o", 
+       lwd=3)
+```
+
+```{r}
+# 通过卡方检验证明事件是否符合完全空间随机分布
+teststats <- quadrat.test(BluePlaquesSub.ppp, nx = 6, ny = 6)
+
+plot(BluePlaquesSub.ppp,pch=16,cex=0.5, main="Blue Plaques in Harrow")
+plot(teststats, add=T, col = "red")
+```
+## Ripley's K检验
+```{r}
+K <- BluePlaquesSub.ppp %>%
+  Kest(., correction="border") %>%
+  plot()
+```
+
+```{r}
+Kval <- as.data.frame(Kest(BluePlaquesSub.ppp, correction = "Ripley"))
+```
+
+## 基于密度的空间聚类DBSCAN
+```{r}
+library(fpc)
+
+#first check the coordinate reference system of the Harrow spatial polygon:
+st_geometry(BoroughMap)
+```
+
+```{r}
+#first extract the points from the spatial points data frame
+BluePlaquesSubPoints <- BluePlaquesSub %>%
+  coordinates(.)%>%
+  as.data.frame()
+
+#now run the dbscan analysis
+db <- BluePlaquesSubPoints %>%
+  fpc::dbscan(.,eps = 700, MinPts = 4) 
+# 聚类半径eps设置为k检验中的转折点700，MinPts为被视为聚类的最小点数
+
+#now plot the results
+plot(db, BluePlaquesSubPoints, main = "DBSCAN Output", frame = F)
+plot(BoroughMap$geometry, add=T)
+```
+
+```{r}
+# 用kNNdistplot()寻找更合适的eps值
+library(dbscan)
+
+BluePlaquesSubPoints%>%
+  dbscan::kNNdistplot(.,k=4)
+# 更合适的eps值为1000
+```
+### 使用ggplot绘图
+```{r}
+library(ggplot2)
+
+# 将聚类结果添加到数据中
+BluePlaquesSubPoints<- BluePlaquesSubPoints %>%
+  mutate(dbcluster=db$cluster)
+```
+
+```{r}
+# 创建凸包来包围聚类内的点
+chulls <- BluePlaquesSubPoints %>%
+  group_by(dbcluster) %>% # 按聚类分组
+  dplyr::mutate(hull = 1:n(), # 为每个点生成索引
+  # 创建包围聚类内点的多边形
+  hull = factor(hull, chull(coords.x1, coords.x2)))%>%
+  arrange(hull) # 按凸包顺序排列点
+```
+* 凸包是一种几何结构，用于包围数据点形成的最小多边形。这可以帮助直观展示每个聚类的边界或空间范围。
+
+* 在空间分析和可视化中，凸包常用于描述聚类的外部轮廓。
+```{r}
+# 删除0值，即所有不属于聚类的点
+chulls <- chulls %>%
+  filter(dbcluster >=1)
+```
+
+```{r}
+# 绘图
+dbplot <- ggplot(data=BluePlaquesSubPoints, 
+                 aes(coords.x1,coords.x2, colour=dbcluster, fill=dbcluster))  # dbcluster作为颜色填充变量
+# 添加数据点
+dbplot <- dbplot + geom_point() 
+# 绘制凸包
+dbplot <- dbplot + geom_polygon(data = chulls, 
+                                aes(coords.x1,coords.x2, group=dbcluster), # 按dbcluster分组，每个聚类会有一个凸包
+                                alpha = 0.5)  # 透明度
+#now plot, setting the coordinates to scale correctly and as a black and white plot 
+# 图形背景设置黑白，坐标轴比例相等
+dbplot + theme_bw() + coord_equal() # 图形背景黑白，坐标轴比例相等
+```
+
+```{r}
+# 添加底图
+HarrowWGSbb <- Harrow %>%
+  st_transform(., 4326)%>%
+  st_bbox()
+```
+
+```{r}
+# 将底图转换为英国国家网格
+library(OpenStreetMap)
+
+basemap <- OpenStreetMap::openmap(c(51.5549876,-0.4040502),c(51.6405356,-0.2671315),
+                         zoom=NULL,
+                         "osm")
+
+  # convert the basemap to British National Grid
+basemap_bng <- openproj(basemap, projection="+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +nadgrids=OSTN15_NTv2_OSGBtoETRS.gsb +units=m +no_defs +type=crs")
+```
+
+```{r}
+# 绘制带底图的图像
+autoplot.OpenStreetMap(basemap_bng)+ 
+  geom_point(data=BluePlaquesSubPoints, 
+             aes(coords.x1,coords.x2, 
+                 colour=dbcluster, 
+                 fill=dbcluster)) + 
+  geom_polygon(data = chulls, 
+               aes(coords.x1,coords.x2, 
+                   group=dbcluster,
+                   fill=dbcluster), 
+               alpha = 0.5)  
+```
+
+
+
+
