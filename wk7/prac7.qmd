@@ -1,0 +1,147 @@
+---
+title: "prac7"
+format: html
+editor: visual
+---
+
+# 读取数据
+```{r}
+library(here)
+library(janitor)
+library(sf)
+library(tidyverse)
+#read the ward data in
+LondonWards <- st_read("../wk7/statistical-gis-boundaries-london/ESRI/London_Ward.shp")
+```
+
+## 伦敦ward
+```{r}
+LondonWardsMerged <- st_read("../wk7/statistical-gis-boundaries-london/ESRI/London_Ward_CityMerged.shp")%>%
+  st_transform(.,27700)
+```
+## ward空间数据合并
+```{r}
+WardData <- read_csv("https://data.london.gov.uk/download/ward-profiles-and-atlas/772d2d64-e8c6-46cb-86f9-e52b4c7851bc/ward-profiles-excel-version.csv",
+                    locale = locale(encoding = "latin1"),
+                     na = c("NA", "n/a")) %>% 
+  clean_names()
+
+LondonWardsMerged <- LondonWardsMerged %>% 
+  left_join(WardData, 
+            by = c("GSS_CODE" = "new_code"))%>%
+  dplyr::distinct(GSS_CODE, .keep_all = T)%>%
+  dplyr::select(GSS_CODE, ward_name, average_gcse_capped_point_scores_2014)
+```
+```{r}
+st_crs(LondonWardsMerged)
+```
+## 点数据
+```{r}
+library(tmap)
+
+BluePlaques <- st_read("https://s3.eu-west-2.amazonaws.com/openplaques/open-plaques-london-2018-04-08.geojson") %>%
+    st_transform(.,27700)
+```
+## 绘图检查
+```{r}
+tmap_mode("plot")
+tm_shape(LondonWardsMerged) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaques) +
+  tm_dots(col = "blue")
+```
+# 数据清理
+```{r}
+summary(BluePlaques)
+```
+## 清除伦敦边界外的点
+```{r}
+BluePlaquesSub <- BluePlaques[LondonWardsMerged,]
+
+tm_shape(LondonWardsMerged) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+```
+
+```{r}
+summary(BluePlaquesSub)
+```
+# 数据处理
+## 统计伦敦每个区内的所有点
+
+这里不直接使用st_join（默认st_intersects），因为st_join为左连接，无匹配的值也会单独返回一行NAN，直接使用st_intersects可以只返回所有匹配值
+```{r}
+example<-st_intersects(LondonWardsMerged, BluePlaquesSub)
+
+example
+```
+empty表示无交集
+347表示LondonWardsMerged第2个对象与BluePlaquesSub第347个对象相交
+
+## 提取每个列表长度并添加为新列
+```{r}
+library(sf)
+points_sf_joined <- LondonWardsMerged%>%
+  mutate(n = lengths(st_intersects(., BluePlaquesSub)))%>%
+  janitor::clean_names()%>%
+  #计算area面积
+  mutate(area=st_area(.))%>%
+  #计算area的点密度
+  mutate(density=n/area)%>%
+  #select density and some other variables 
+  dplyr::select(density, ward_name, gss_code, n, average_gcse_capped_point_scores_2014)
+
+points_sf_joined
+```
+## 绘制分级统计地图
+```{r}
+points_sf_joined<- points_sf_joined %>%                    
+  group_by(gss_code) %>%         
+  summarise(density = first(density),
+          wardname= first(ward_name),
+          plaquecount= first(n))
+
+tm_shape(points_sf_joined) +
+    tm_polygons("density",
+        style="jenks",
+        palette="PuOr",
+        midpoint=NA,
+        popup.vars=c("wardname", "density"),
+        title="Blue Plaque Density")
+```
+结果似乎在中心呈现聚集，接下来使用 Moran's I 检查
+# Moran's I
+## 定义权重矩阵
+
+```{r}
+library(spdep)
+```
+### 计算所有区的质心
+```{r}
+#First calculate the centroids of all Wards in London
+
+coordsW <- points_sf_joined%>%
+  st_centroid()%>%
+  st_geometry()
+  
+plot(coordsW,axes=TRUE)
+```
+
+### 创建邻居列表
+```{r}
+LWard_nb <- points_sf_joined %>%
+  poly2nb(., queen=T) # 使用queens定义邻居（包含前后左右对角线）
+```
+
+```{r}
+summary(LWard_nb)
+```
+### 绘制邻居
+```{r}
+#plot them
+plot(LWard_nb, st_geometry(coordsW), col="red")
+#add a map underneath
+plot(points_sf_joined$geometry, add=T)
+```
+
