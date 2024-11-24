@@ -145,3 +145,199 @@ plot(LWard_nb, st_geometry(coordsW), col="red")
 plot(points_sf_joined$geometry, add=T)
 ```
 
+### 矩阵样式
+```{r}
+# 利用二进制求和，算出邻居数
+Lward.lw <- LWard_nb %>%
+  nb2mat(., style="B")
+
+sum(Lward.lw)      # 全局标准化权重：1/3680
+sum(Lward.lw[1,])  # 行标准化权重：1/6
+```
+## 自相关
+```{r}
+Lward.lw <- LWard_nb %>%
+  nb2listw(., style="C")  # 将邻居信息对象转换为空间权重列表
+```
+
+### 计算Moran的I值
+这里使用密度而非原始值是为了排除区域大小的影响
+```{r}
+I_LWard_Global_Density <- points_sf_joined %>%
+  pull(density) %>%  # 提取density列
+  as.vector()%>%  # 将density转换为向量
+  moran.test(., Lward.lw)   # 计算Moran的I值
+
+I_LWard_Global_Density
+```
+### 计算Geary的C值（侧重于差异性，着重关注相邻地理单元之间的差异程度）
+C<1：表示正的空间自相关；
+C=1：表示没有显著的空间自相关；
+C>1：表示负的空间自相关
+```{r}
+C_LWard_Global_Density <- 
+  points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  geary.test(., Lward.lw)
+
+C_LWard_Global_Density
+```
+### Getis Ord G（识别空间热点和冷点）
+G 值远大于期望值且 p 值极小，表明数据中存在显著的集聚
+```{r}
+G_LWard_Global_Density <- 
+  points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  globalG.test(., Lward.lw)
+
+G_LWard_Global_Density
+```
+### 局部 Moran's I
+```{r}
+#use the localmoran function to generate I for each ward in the city
+
+# 计算原始值的局部Moran I
+I_LWard_Local_count <- points_sf_joined %>%
+  pull(plaquecount) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw)%>%
+  as_tibble()
+
+# 计算密度的局部Moran I
+I_LWard_Local_Density <- points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw)%>%
+  as_tibble() # 将输出转换为 tibble 格式，这是一种 R 中的数据框
+
+#what does the output (the localMoran object) look like?
+# 查看前5行输出
+slice_head(I_LWard_Local_Density, n=5)
+```
+```{r}
+# 将局部Moran I值和Z score复制回LondonWards空间数据框
+points_sf_joined <- points_sf_joined %>%
+  mutate(plaque_count_I = as.numeric(I_LWard_Local_count$Ii))%>%
+  mutate(plaque_count_Iz =as.numeric(I_LWard_Local_count$Z.Ii))%>%
+  mutate(density_I =as.numeric(I_LWard_Local_Density$Ii))%>%
+  mutate(density_Iz =as.numeric(I_LWard_Local_Density$Z.Ii))
+```
+
+### 绘制局部 Moran's I 输出的地图
+```{r}
+# 手动设置断点
+breaks1<-c(-1000,-2.58,-1.96,-1.65,1.65,1.96,2.58,1000)
+```
+
+```{r}
+# 配置颜色，红色对应高值
+library(RColorBrewer)
+MoranColours<- rev(brewer.pal(8, "RdGy"))
+```
+
+```{r}
+# 绘制地图
+tm_shape(points_sf_joined) +
+    tm_polygons("plaque_count_Iz",
+        style="fixed",
+        breaks=breaks1,
+        palette=MoranColours,
+        midpoint=NA,
+        title="Local Moran's I, Blue Plaques in London")
+```
+
+### Local Getis Ord G
+输出结果是一组z score
+```{r}
+Gi_LWard_Local_Density <- points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  localG(., Lward.lw)
+
+head(Gi_LWard_Local_Density)
+```
+
+```{r}
+# 添加到LondonWard
+points_sf_joined <- points_sf_joined %>%
+  mutate(density_G = as.numeric(Gi_LWard_Local_Density))
+```
+
+```{r}
+# 绘制地图
+library(RColorBrewer)
+
+GIColours<- rev(brewer.pal(8, "RdBu"))
+
+#now plot on an interactive map
+tm_shape(points_sf_joined) +
+    tm_polygons("density_G",
+        style="fixed",
+        breaks=breaks1,
+        palette=GIColours,
+        midpoint=NA,
+        title="Gi*, Blue Plaques in London")
+```
+
+## 其他变量（平均 GCSE 分数）
+```{r}
+slice_head(points_sf_joined, n=2)
+```
+```{r}
+#删除几何图形
+Datatypelist <- LondonWardsMerged %>% 
+  st_drop_geometry()%>%
+  summarise_all(class) %>%
+  pivot_longer(everything(), 
+               names_to="All_variables", 
+               values_to="Variable_class")
+
+Datatypelist
+```
+```{r}
+# 绘制局部Moran I：比较邻近区域的相似性和差异性
+I_LWard_Local_GCSE <- LondonWardsMerged %>%
+  arrange(GSS_CODE)%>%
+  pull(average_gcse_capped_point_scores_2014) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw)%>%
+  as_tibble()
+
+points_sf_joined <- points_sf_joined %>%
+  arrange(gss_code)%>%
+  mutate(GCSE_LocIz = as.numeric(I_LWard_Local_GCSE$Z.Ii))
+
+
+tm_shape(points_sf_joined) +
+    tm_polygons("GCSE_LocIz",
+        style="fixed",
+        breaks=breaks1,
+        palette=MoranColours,
+        midpoint=NA,
+        title="Local Moran's I, GCSE Scores")
+```
+红色表示具有显著的正空间自相关性
+
+```{r}
+# 绘制Getis-Ord G：比较区域高值和低值的空间集聚
+G_LWard_Local_GCSE <- LondonWardsMerged %>%
+  dplyr::arrange(GSS_CODE)%>%
+  dplyr::pull(average_gcse_capped_point_scores_2014) %>%
+  as.vector()%>%
+  localG(., Lward.lw)
+
+points_sf_joined <- points_sf_joined %>%
+  dplyr::arrange(gss_code)%>%
+  dplyr::mutate(GCSE_LocGiz = as.numeric(G_LWard_Local_GCSE))
+
+tm_shape(points_sf_joined) +
+    tm_polygons("GCSE_LocGiz",
+        style="fixed",
+        breaks=breaks1,
+        palette=GIColours,
+        midpoint=NA,
+        title="Gi*, GCSE Scores")
+```
+红色表示高值集中区，蓝色表示低值集中区
