@@ -20,7 +20,8 @@ library(fs)
 library(janitor)
 ```
 
-# 读取数据
+# 数据准备
+## 读取数据
 ```{r}
 #download a zip file containing some boundaries we want to use
 
@@ -54,7 +55,7 @@ Londonwards<-fs::dir_info("./statistical-gis-boundaries-london/ESRI")%>%
   sf::st_read()
 
 ```
-## 快速绘图查看
+### 快速绘图查看
 ```{r}
 #check the data
 qtm(Londonwards)
@@ -67,7 +68,7 @@ LondonWardProfiles <- read_csv("https://data.london.gov.uk/download/ward-profile
                                locale = locale(encoding = 'Latin1'), 
                                col_names = TRUE)
 ```
-## 查看列名和数据类型
+### 查看列名和数据类型
 ```{r}
 #check all of the columns have been read in correctly
 Datatypelist <- LondonWardProfiles %>% 
@@ -109,8 +110,9 @@ lond_sec_schools_sf <- lon_schools_sf %>%
 tmap_mode("plot")
 qtm(lond_sec_schools_sf)
 ```
-# explore the factors that might influence GCSE exam performance
-## Regression Basics
+# 检验研究假设
+explore the factors that might influence GCSE exam performance
+## Regression基础
 ```{r}
 # 输入横纵轴变量，生成散点图
 q <- qplot(x = `Unauthorised Absence in All Schools (%) - 2013`, 
@@ -124,7 +126,7 @@ q <- qplot(x = `Unauthorised Absence in All Schools (%) - 2013`,
 q + stat_smooth(method="lm", se=FALSE, size=1) + 
   geom_jitter()
 ```
-## Running a Regression Model(regression方法1)
+## 运行回归模型(方法1)
 ```{r}
 # 清理数据并选择自变量和因变量
 Regressiondata<- LonWardProfiles%>%
@@ -144,7 +146,7 @@ model1 <- Regressiondata %>%
 # 查看结果
 summary(model1)
 ```
-### tidy our output
+### 整理输出
 ```{r}
 library(broom)
 tidy(model1)
@@ -160,7 +162,7 @@ library(tidypredict)
 Regressiondata %>%
   tidypredict_to_column(model1)
 ```
-## tidymodels(regression方法2)
+## 用tidymodels运行回归模型(方法2)
 ```{r}
 library(tidymodels)
 
@@ -262,21 +264,203 @@ qplot(x = (median_house_price_2014)^-1,
 ```
 ### 假设 2 - 模型中的残差应呈正态分布
 ```{r}
+#save the residuals into your dataframe
+model_data <- model1 %>%
+  augment(., Regressiondata)
 
+#plot residuals
+model_data%>%
+dplyr::select(.resid)%>%
+  pull()%>%
+  qplot()+ 
+  geom_histogram() 
+```
+### 假设 3 - 独立变量不存在多重共线性
+```{r}
+# 添加房价作为自变量，扩展为多元回归模型
+Regressiondata2<- LonWardProfiles%>%
+  clean_names()%>%
+  dplyr::select(average_gcse_capped_point_scores_2014,
+         unauthorised_absence_in_all_schools_percent_2013,
+         median_house_price_2014)
+
+# 线性拟合GCSE Scores ∼ Absence Rate+log(House Price)
+model2 <- lm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014), data = Regressiondata2)
+
+# 提取回归模型的主要结果，以表格格式展示
+tidy(model2)
 ```
 
 ```{r}
-
+glance(model2)
 ```
 
 ```{r}
+# 将回归模型的残差保存到数据中，方便后续分析
+model_data2 <- model2 %>%
+  augment(., Regressiondata2)
 
+# 将残差加入到地理空间数据
+LonWardProfiles <- LonWardProfiles %>%
+  mutate(model2resids = residuals(model2))
+```
+
+#### 检查变量之间的多重共线性
+```{r}
+library(corrr)
+
+Correlation <- LonWardProfiles %>%
+  st_drop_geometry()%>%   # 移除空间几何信息，保留属性表数据
+  dplyr::select(average_gcse_capped_point_scores_2014,
+         unauthorised_absence_in_all_schools_percent_2013,
+         median_house_price_2014) %>%    # 选择相关变量
+  mutate(median_house_price_2014 =log(median_house_price_2014))%>%   # 对房价取对数
+    correlate() %>%   # 计算相关性矩阵
+  # 从相关性矩阵中排除因变量，只关注自变量之间的相关性
+  focus(-average_gcse_capped_point_scores_2014, mirror = TRUE) 
+
+
+# 可视化相关性矩阵
+rplot(Correlation)
+# 正相关：点为蓝色，大小表示强度。
+# 负相关：点为红色，大小表示强度。
+# 无相关：点较小或不存在。
+```
+#### 方差膨胀因子（VIF）
+任何变量的 VIF 值超过10，可能需要担心，甚至可能从分析中删除该变量
+```{r}
+vif(model2)
 ```
 
 ```{r}
+# 选择 LonWardProfiles 数据集中第10列到第74列,计算相关性矩阵
+position <- c(10:74)
 
+Correlation_all<- LonWardProfiles %>%
+  st_drop_geometry()%>%
+  dplyr::select(position)%>%
+    correlate()
 ```
 
+```{r}
+# 绘制相关性矩阵
+rplot(Correlation_all)
+```
+### 假设 4 - 同方差性
+```{r}
+#print some model diagnositcs. 
+par(mfrow=c(2,2))    # 图形布局为 2 行 2 列
+plot(model2)   # 默认生成的 4 个诊断图
+# 1. 残差-拟合值图（Residuals vs Fitted）
+# 2. 正态 Q-Q 图（Normal Q-Q）
+# 3. 标准化残差的尺度位置图（Scale-Location 或 Spread-Location）
+# 4. 残差杠杆值图（Residuals vs Leverage）
+```
+
+```{r}
+# 使用check_model()生成诊断图
+library(performance)
+check_model(model2, check="all")
+```
+### 假设 5 - 残差独立性
+#### 标准自相关（Durbin-Watson 检验）
+```{r}
+#run durbin-watson test
+DW <- durbinWatsonTest(model2)
+tidy(DW)
+```
+#### 空间自相关
+```{r}
+# 绘制残差图，查看是否有明显的趋势
+tmap_mode("view")
+#qtm(LonWardProfiles, fill = "model1_resids")
+
+tm_shape(LonWardProfiles) +
+  tm_polygons("model2resids",
+              palette = "RdYlBu") +
+tm_shape(lond_sec_schools_sf) + tm_dots(col = "TYPE")
+# 有些蓝色区域与其他蓝色区域相邻，有些红色/橙色区域与其他红色/橙色区域相邻，模型可能存在一些空间自相关性
+```
+利用Moran's I来检查空间自相关性
+```{r}
+#calculate the centroids of all Wards in London
+coordsW <- LonWardProfiles%>%
+  st_centroid()%>%
+  st_geometry()
+
+plot(coordsW)
+```
+
+```{r}
+# 为空间数据生成邻接结构
+# 第一种：基于多边形的 Queen 邻接
+
+LWard_nb <- LonWardProfiles %>%
+  poly2nb(., queen=T)
+
+# 第二种：基于坐标的 K 近邻
+knn_wards <-coordsW %>%
+  knearneigh(., k=4)
+
+LWard_knn <- knn_wards %>%
+  knn2nb()
+
+# 绘制Queen 邻接网络
+plot(LWard_nb, st_geometry(coordsW), col="red")
+```
+
+```{r}
+# 绘制K 近邻网络
+plot(LWard_knn, st_geometry(coordsW), col="blue")
+```
+
+```{r}
+# 创建空间权重矩阵
+# queen
+Lward.queens_weight <- LWard_nb %>%
+  nb2listw(., style="W")
+
+# k
+Lward.knn_4_weight <- LWard_knn %>%
+  nb2listw(., style="W")
+```
+
+```{r}
+# 使用queen对残差进行 Moran I 检验
+Queen <- LonWardProfiles %>%
+  st_drop_geometry()%>%
+  dplyr::select(model2resids)%>%
+  pull()%>%
+  moran.test(., Lward.queens_weight)%>%
+  tidy()
+Queen
+```
+
+```{r}
+# 使用k近邻对残差进行 Moran I 检验
+Nearest_neighbour <- LonWardProfiles %>%
+  st_drop_geometry()%>%
+  dplyr::select(model2resids)%>%
+  pull()%>%
+  moran.test(., Lward.knn_4_weight)%>%
+  tidy()
+Nearest_neighbour
+```
+estimate1：Moran's I 指数
+正值：变量存在正的空间自相关（相邻单元值相似）
+负值：变量存在负的空间自相关（相邻单元值相反）
+接近 0：没有显著的空间自相关
+
+estimate2：Moran's I 在随机分布下的理论期望值
+
+estimate3：Moran's I 的分布方差，用于计算统计显著性
+
+statistic：Z 值，检验 Moran's I 是否显著高于（或低于）随机分布下的期望值
+
+# 空间回归模型
+## 处理空间自相关残差
+### 空间滞后（滞后因变量）模型
 ```{r}
 
 ```
