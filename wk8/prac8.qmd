@@ -619,7 +619,115 @@ SARMA 同时考虑了空间误差和空间滞后效应，显著性表明数据�
     如果它是模型误差的一部分，需修正（如 误差SEM）
     如果它是研究现象的一部分，需解释（如 GWR）
 
-## 地理加权回归 (GWR)
+
+```{r}
+# 读取数据
+extradata <- read_csv("https://www.dropbox.com/s/qay9q1jwpffxcqj/LondonAdditionalDataFixed.csv?raw=1")
+
+#add the extra data too
+LonWardProfiles <- LonWardProfiles%>%
+  left_join(., 
+            extradata, 
+            by = c("gss_code" = "Wardcode"))%>%
+  clean_names()
+
+#print some of the column names
+LonWardProfiles%>%
+  names()%>%
+  tail(., n=10)
+```
+### 扩展回归模型 — 虚拟变量
+虚拟变量始终是分类数据
+```{r}
+# 分内外伦敦
+p <- ggplot(LonWardProfiles, 
+            aes(x=unauth_absence_schools11, 
+                y=average_gcse_capped_point_scores_2014))
+p + geom_point(aes(colour = inner_outer)) 
+```
+
+```{r}
+#first, let's make sure R is reading our InnerOuter variable as a factor
+#see what it is at the moment...
+# 查看所有变量的类型
+
+Datatypelist <- LonWardProfiles %>%
+  st_drop_geometry%>% 
+#summarise_all only works with .tbl now (not sf) so we   drop geometry to check  
+  summarise_all(class)%>%
+  pivot_longer(everything(), 
+             names_to="All_variables", 
+             values_to="Variable_class")
+
+Datatypelist
+```
+
+```{r}
+# change to factor
+# 将变量 inner_outer 转换为分类变量
+LonWardProfiles<- LonWardProfiles %>%
+  mutate(inner_outer=as.factor(inner_outer))
+
+# 运行线性回归
+model3 <- lm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014) + 
+               inner_outer, 
+             data = LonWardProfiles)
+ 
+tidy(model3)
+```
+
+```{r}
+# 查看虚拟变量的对比矩阵
+contrasts(LonWardProfiles$inner_outer)
+```
+
+```{r}
+# 使用 relevel() 重新定义因子的参考类别
+LonWardProfiles <- LonWardProfiles %>%
+  mutate(inner_outer = relevel(inner_outer, 
+                               ref="Outer")) 
+# 设定 Outer 为参考类别，系数为 0
+
+model3 <- lm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014) + 
+               inner_outer, 
+             data = LonWardProfiles)
+
+tidy(model3)
+```
+
+```{r}
+glance(model3)
+```
+### 拓展回归模型 — 添加更多解释变量
+```{r}
+# 引入了两个新的变量（log(crime_rate_2014_15) 和 cars_per_household_2011）
+model4 <- lm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014) + 
+               inner_outer + log(crime_rate_2014_15) + cars_per_household_2011, 
+             data = LonWardProfiles)
+ 
+tidy(model4)
+```
+
+```{r}
+glance(model4)
+# 模型的拟合优度略有提升（R² 和调整后的 R² 均更高），残差标准误（sigma）更小
+```
+## 空间非平稳性和地理加权回归模型 (GWR)
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
 ```{r}
 
 ```
