@@ -363,7 +363,7 @@ plot(model2)   # 默认生成的 4 个诊断图
 library(performance)
 check_model(model2, check="all")
 ```
-### 假设 5 - 残差独立性
+### 假设 5 - 误差独立性
 #### 标准自相关（Durbin-Watson 检验）
 ```{r}
 #run durbin-watson test
@@ -462,21 +462,164 @@ statistic：Z 值，检验 Moran's I 是否显著高于（或低于）随机分�
 ## 处理空间自相关残差
 ### 空间滞后（滞后因变量）模型
 ```{r}
+#Original Model
+model2 <- lm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014), data = LonWardProfiles)
 
+tidy(model2)
 ```
 
 ```{r}
+# 使用 Queen's case 空间权重矩阵运行空间滞后模型
+library(spatialreg)
 
+slag_dv_model2_queen <- lagsarlm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014), 
+               data = LonWardProfiles, 
+               nb2listw(LWard_nb, style="C"),   # 将邻接列表转换为空间权重列表对象
+               method = "eigen")
+
+#what do the outputs show?
+tidy(slag_dv_model2_queen)
 ```
 
 ```{r}
-
+#glance() gives model stats but this need something produced from a linear model
+#here we have used lagsarlm()
+glance(slag_dv_model2_queen)
 ```
 
 ```{r}
+t<-summary(slag_dv_model2_queen)
 
+sum(t$residuals)   # 提取模型的残差
 ```
 
+```{r}
+# 似然比检验（Likelihood Ratio Test）
+library(lmtest)
+lrtest(slag_dv_model2_queen, model2)
+# Model 1（空间滞后回归模型）与 Model 2（普通线性回归模型）的拟合差异不显著（p = 0.4968）
+# 由于模型类型不同（Sarlm vs lm），比较结果可能不完全可靠
+```
+
+```{r}
+# 通过 impacts 函数计算空间滞后回归模型的直接、间接和总影响
+weight_list<-nb2listw(LWard_knn, style="C")  # 创建空间权重列表
+
+imp <- impacts(slag_dv_model2_queen, listw=weight_list)   # 计算 SAR 模型的影响，包括直接、间接和总影响
+
+imp
+```
+Direct（直接效应）：变量自身的变化对因变量的直接影响
+Indirect（间接效应）：通过空间滞后项传播到邻近区域的间接影响
+Total（总效应）：直接效应与间接效应的叠加
+
+```{r}
+# 应对更大的矩阵计算直接、间接和总影响
+slag_dv_model2_queen_row <- lagsarlm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014), 
+               data = LonWardProfiles, 
+               nb2listw(LWard_nb, style="W"), 
+               method = "eigen")
+
+
+W <- as(weight_list, "CsparseMatrix")
+
+# 使用不同的迹矩阵方法
+trMatc <- trW(W, type="mult")
+trMC <- trW(W, type="MC")
+
+imp2 <- impacts(slag_dv_model2_queen_row, tr=trMatc, R=200)
+
+imp3 <- impacts(slag_dv_model2_queen_row, tr=trMC, R=200)
+
+imp2
+```
+
+```{r}
+imp3
+```
+
+```{r}
+sum <- summary(imp2,  zstats=TRUE, short=TRUE)
+
+sum
+```
+
+```{r}
+# 使用 k 最近邻 (k=4) 运行空间滞后模型
+#run a spatially-lagged regression model
+slag_dv_model2_knn4 <- lagsarlm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014), 
+               data = LonWardProfiles, 
+               nb2listw(LWard_knn,    # 使用 k 最近邻 (k=4) 构建的邻接矩阵
+                        style="C"), 
+               method = "eigen")
+
+#what do the outputs show?
+tidy(slag_dv_model2_knn4)
+```
+空间滞后效应（rho = 0.374，显著）
+所有变量的 P 值均显著（P 值接近 0），表明模型和变量的影响均有统计意义
+```{r}
+# 检验空间滞后回归模型的残差是否还存在空间自相关
+
+LonWardProfiles <- LonWardProfiles %>%
+  mutate(slag_dv_model2_knn_resids = residuals(slag_dv_model2_knn4))
+
+KNN4Moran <- LonWardProfiles %>%
+  st_drop_geometry()%>%
+  dplyr::select(slag_dv_model2_knn_resids)%>%
+  pull()%>%
+  moran.test(., Lward.knn_4_weight)%>%
+  tidy()
+
+KNN4Moran
+```
+### 空间误差模型
+```{r}
+sem_model1 <- errorsarlm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+               log(median_house_price_2014), 
+               data = LonWardProfiles,
+               nb2listw(LWard_knn, style="C"), 
+               method = "eigen")
+
+tidy(sem_model1)
+# lambda (空间误差系数)：λ=0.4749 表明误差项存在适中的正向空间自相关
+```
+滞后模型考虑了某个区域的因变量值可能与邻近区域中该变量的值相关或受其影响的情况
+误差模型并不假设相邻的独立变量会影响因变量，而是假设模型的规范或所用的数据存在问题，没有空间过程，只是一个未解释但有影响力的变量的聚类
+知道导致因变量中空间自相关的原因时，可能运行滞后模型
+当不确定可能缺少什么时，可能会运行误差模型
+
+更科学的方法 - 拉格朗日乘数检验:识别是否需要使用空间误差模型 (SEM) 或空间滞后模型 (SAR)
+### 拉格朗日乘数检验(LM检验)
+```{r}
+library(spdep)
+
+Lward.queens_weight_ROW <- LWard_nb %>%
+  nb2listw(., style="W")
+
+lm.LMtests(model2, Lward.queens_weight_ROW, test = c("LMerr","LMlag","RLMerr","RLMlag","SARMA"))
+# LMerr	测试是否需要使用 空间误差模型 (SEM)
+# LMlag	测试是否需要使用 空间滞后模型 (SAR)
+```
+检验LMerr或LMlag是否显著,如果其中一个比另一个显著得多，选择其中最显著的模型
+SARMA 同时考虑了空间误差和空间滞后效应，显著性表明数据中可能同时存在两种空间效应
+
+空间回归分析的一般步骤：
+1、首先运行普通最小二乘回归 (OLS)
+2、检查残差的空间自相关性（Moran's I）
+3、需要根据具体情况选择适合的模型：
+·它是一个全局模型（空间误差模型/空间滞后模型）还是局部模型（归GWR）？
+·单一模型（误差/滞后）可以适用于研究区域吗？——研究区域内的空间依赖性是否具有一致性
+·空间自相关是否存在问题（误差）或显示局部趋势（GWR）？
+  ——空间自相关的意义是什么？
+    如果它是模型误差的一部分，需修正（如 误差SEM）
+    如果它是研究现象的一部分，需解释（如 GWR）
+
+## 地理加权回归 (GWR)
 ```{r}
 
 ```
