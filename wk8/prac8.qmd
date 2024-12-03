@@ -112,7 +112,7 @@ qtm(lond_sec_schools_sf)
 ```
 # 检验研究假设
 explore the factors that might influence GCSE exam performance
-## Regression基础
+## 一、回归基础:查看散点图
 ```{r}
 # 输入横纵轴变量，生成散点图
 q <- qplot(x = `Unauthorised Absence in All Schools (%) - 2013`, 
@@ -126,7 +126,8 @@ q <- qplot(x = `Unauthorised Absence in All Schools (%) - 2013`,
 q + stat_smooth(method="lm", se=FALSE, size=1) + 
   geom_jitter()
 ```
-## 运行回归模型(方法1)
+## 二、运行回归模型（OLS）
+### 1、方法1：lm()运行回归模型
 ```{r}
 # 清理数据并选择自变量和因变量
 Regressiondata<- LonWardProfiles%>%
@@ -146,7 +147,7 @@ model1 <- Regressiondata %>%
 # 查看结果
 summary(model1)
 ```
-### 整理输出
+整理输出
 ```{r}
 library(broom)
 tidy(model1)
@@ -162,7 +163,7 @@ library(tidypredict)
 Regressiondata %>%
   tidypredict_to_column(model1)
 ```
-## 用tidymodels运行回归模型(方法2)
+### 2、方法2：tidymodels()运行回归模型
 ```{r}
 library(tidymodels)
 
@@ -183,8 +184,8 @@ tidy(lm_fit)
 ```{r}
 glance(lm_fit)
 ```
-## Linear Regression的基本假设
-### 假设 1 - 因变量和自变量之间存在线性关系
+## 三、检查假设
+### 1 - 检查变量的分布形态
 除绘制散点图外，检查是否可能是线性关系的另一种方法是查看变量的频率分布。
 如果是正态分布，那么如果两个变量以某种方式相关，那么很有可能是线性关系。
 ```{r}
@@ -262,7 +263,7 @@ qplot(x = (median_house_price_2014)^-1,
       y = average_gcse_capped_point_scores_2014,
       data=LonWardProfiles)
 ```
-### 假设 2 - 模型中的残差应呈正态分布
+### 2 - 检查残差是否呈正态分布
 ```{r}
 #save the residuals into your dataframe
 model_data <- model1 %>%
@@ -275,7 +276,7 @@ dplyr::select(.resid)%>%
   qplot()+ 
   geom_histogram() 
 ```
-### 假设 3 - 独立变量不存在多重共线性
+### 3 - 检查变量不存在多重共线性
 ```{r}
 # 添加房价作为自变量，扩展为多元回归模型
 Regressiondata2<- LonWardProfiles%>%
@@ -306,7 +307,7 @@ LonWardProfiles <- LonWardProfiles %>%
   mutate(model2resids = residuals(model2))
 ```
 
-#### 检查变量之间的多重共线性
+#### ——自变量相关性矩阵
 ```{r}
 library(corrr)
 
@@ -327,8 +328,8 @@ rplot(Correlation)
 # 负相关：点为红色，大小表示强度。
 # 无相关：点较小或不存在。
 ```
-#### 方差膨胀因子（VIF）
-任何变量的 VIF 值超过10，可能需要担心，甚至可能从分析中删除该变量
+#### ——VIF（方差膨胀因子）
+任何变量的 VIF > 10 表示存在严重共线性，可能需要从分析中删除该变量
 ```{r}
 vif(model2)
 ```
@@ -347,7 +348,7 @@ Correlation_all<- LonWardProfiles %>%
 # 绘制相关性矩阵
 rplot(Correlation_all)
 ```
-### 假设 4 - 同方差性
+### 4 - 检查同方差性
 ```{r}
 #print some model diagnositcs. 
 par(mfrow=c(2,2))    # 图形布局为 2 行 2 列
@@ -363,14 +364,14 @@ plot(model2)   # 默认生成的 4 个诊断图
 library(performance)
 check_model(model2, check="all")
 ```
-### 假设 5 - 误差独立性
-#### 标准自相关（Durbin-Watson 检验）
+### 5 - 检查残差独立性
+#### ——标准自相关（Durbin-Watson 检验）
 ```{r}
 #run durbin-watson test
 DW <- durbinWatsonTest(model2)
 tidy(DW)
 ```
-#### 空间自相关
+#### ——空间自相关（Moran's I）
 ```{r}
 # 绘制残差图，查看是否有明显的趋势
 tmap_mode("view")
@@ -394,11 +395,16 @@ plot(coordsW)
 
 ```{r}
 # 为空间数据生成邻接结构
-# 第一种：基于多边形的 Queen 邻接
 
+# 第一种：基于多边形的 Queen 邻接
 LWard_nb <- LonWardProfiles %>%
   poly2nb(., queen=T)
 
+# 绘制Queen 邻接网络
+plot(LWard_nb, st_geometry(coordsW), col="red")
+```
+
+```{r}
 # 第二种：基于坐标的 K 近邻
 knn_wards <-coordsW %>%
   knearneigh(., k=4)
@@ -406,11 +412,6 @@ knn_wards <-coordsW %>%
 LWard_knn <- knn_wards %>%
   knn2nb()
 
-# 绘制Queen 邻接网络
-plot(LWard_nb, st_geometry(coordsW), col="red")
-```
-
-```{r}
 # 绘制K 近邻网络
 plot(LWard_knn, st_geometry(coordsW), col="blue")
 ```
@@ -458,9 +459,20 @@ estimate3：Moran's I 的分布方差，用于计算统计显著性
 
 statistic：Z 值，检验 Moran's I 是否显著高于（或低于）随机分布下的期望值
 
-# 空间回归模型
-## 处理空间自相关残差
-### 空间滞后（滞后因变量）模型
+# 四、空间回归模型（若数据为空间数据）
+空间回归分析的一般步骤：
+1、首先运行普通最小二乘回归 (OLS)
+2、检查残差的空间自相关性（Moran's I）
+3、需要根据具体情况选择适合的模型：
+·全局模型（空间误差模型SEM/空间滞后模型SLM）还是局部模型（GWR）？
+·单一模型（误差/滞后）可以适用于研究区域吗？——研究区域内的空间依赖性是否具有一致性
+·空间自相关是否存在问题（误差）或显示局部趋势（GWR）？
+  ——空间自相关的意义是什么？
+    如果它是模型误差的一部分，需修正（如误差SEM）
+    如果它是研究现象的一部分，需解释（如GWR）
+
+处理空间自相关残差
+## 1、空间滞后模型(SLM)：考虑因变量之间的空间交互作用
 ```{r}
 #Original Model
 model2 <- lm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
@@ -577,7 +589,7 @@ KNN4Moran <- LonWardProfiles %>%
 
 KNN4Moran
 ```
-### 空间误差模型
+## 2、空间误差模型(SEM)：修正误差项的空间相关性
 ```{r}
 sem_model1 <- errorsarlm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
                log(median_house_price_2014), 
@@ -593,8 +605,8 @@ tidy(sem_model1)
 知道导致因变量中空间自相关的原因时，可能运行滞后模型
 当不确定可能缺少什么时，可能会运行误差模型
 
+### —— 拉格朗日乘数检验(LM检验)
 更科学的方法 - 拉格朗日乘数检验:识别是否需要使用空间误差模型 (SEM) 或空间滞后模型 (SAR)
-### 拉格朗日乘数检验(LM检验)
 ```{r}
 library(spdep)
 
@@ -607,17 +619,6 @@ lm.LMtests(model2, Lward.queens_weight_ROW, test = c("LMerr","LMlag","RLMerr","R
 ```
 检验LMerr或LMlag是否显著,如果其中一个比另一个显著得多，选择其中最显著的模型
 SARMA 同时考虑了空间误差和空间滞后效应，显著性表明数据中可能同时存在两种空间效应
-
-空间回归分析的一般步骤：
-1、首先运行普通最小二乘回归 (OLS)
-2、检查残差的空间自相关性（Moran's I）
-3、需要根据具体情况选择适合的模型：
-·它是一个全局模型（空间误差模型/空间滞后模型）还是局部模型（归GWR）？
-·单一模型（误差/滞后）可以适用于研究区域吗？——研究区域内的空间依赖性是否具有一致性
-·空间自相关是否存在问题（误差）或显示局部趋势（GWR）？
-  ——空间自相关的意义是什么？
-    如果它是模型误差的一部分，需修正（如 误差SEM）
-    如果它是研究现象的一部分，需解释（如 GWR）
 
 
 ```{r}
@@ -715,43 +716,143 @@ tidy(model4)
 glance(model4)
 # 模型的拟合优度略有提升（R² 和调整后的 R² 均更高），残差标准误（sigma）更小
 ```
-## 空间非平稳性和地理加权回归模型 (GWR)
+## 3、地理加权回归模型 (GWR)
+“非平稳性” ——全局模型不能表示可能在局部变化的变量之间的关系
 ```{r}
+# 最终模型
+#select some variables from the data file
+myvars <- LonWardProfiles %>%
+  dplyr::select(average_gcse_capped_point_scores_2014,
+         unauthorised_absence_in_all_schools_percent_2013,
+         median_house_price_2014,
+         rate_of_job_seekers_allowance_jsa_claimants_2015,
+         percent_with_level_4_qualifications_and_above_2011,
+         inner_outer)
 
+#check their correlations are OK
+Correlation_myvars <- myvars %>%
+  st_drop_geometry()%>%
+  dplyr::select(-inner_outer)%>%
+  correlate()
+
+#run a final OLS model
+model_final <- lm(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+                    log(median_house_price_2014) + 
+                    inner_outer + 
+                    rate_of_job_seekers_allowance_jsa_claimants_2015 +
+                    percent_with_level_4_qualifications_and_above_2011, 
+                  data = myvars)
+
+tidy(model_final)
 ```
 
 ```{r}
+LonWardProfiles <- LonWardProfiles %>%
+  mutate(model_final_res = residuals(model_final))
 
+par(mfrow=c(2,2))
+plot(model_final)
 ```
 
 ```{r}
-
+qtm(LonWardProfiles, fill = "model_final_res")
 ```
 
 ```{r}
+final_model_Moran <- LonWardProfiles %>%
+  st_drop_geometry()%>%
+  dplyr::select(model_final_res)%>%
+  pull()%>%
+  moran.test(., Lward.knn_4_weight)%>%
+  tidy()
 
+final_model_Moran
+```
+### —— 使用 spgwr 运行 GWR
+```{r}
+library(spgwr)
+
+coordsW2 <- st_coordinates(coordsW)
+
+LonWardProfiles2 <- cbind(LonWardProfiles,coordsW2)
+
+GWRbandwidth <- gwr.sel(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+                    log(median_house_price_2014) + 
+                    inner_outer + 
+                    rate_of_job_seekers_allowance_jsa_claimants_2015 +
+                    percent_with_level_4_qualifications_and_above_2011, 
+                  data = LonWardProfiles2, 
+                        coords=cbind(LonWardProfiles2$X, LonWardProfiles2$Y),
+                  adapt=T)  # 使用自适应带宽
+# Adaptive q 是自适应带宽的参数，表示每个点周围的邻居点的比例
+# CV score 是该带宽下的交叉验证得分，用于衡量模型拟合效果，得分越低表示模型效果越好
+
+# 通常选择交叉验证得分最低的 Adaptive q 作为最佳带宽，接下来可以使用该带宽参数进行 GWR 模型拟合
 ```
 
 ```{r}
+GWRbandwidth # 输出最佳带宽参数
+```
+adapt = 手动设置考虑的邻居数量/总数
 
+```{r}
+#run the gwr model
+gwr.model = gwr(average_gcse_capped_point_scores_2014 ~ unauthorised_absence_in_all_schools_percent_2013 + 
+                    log(median_house_price_2014) + 
+                    inner_outer + 
+                    rate_of_job_seekers_allowance_jsa_claimants_2015 +
+                    percent_with_level_4_qualifications_and_above_2011, 
+                  data = LonWardProfiles2, 
+                coords=cbind(LonWardProfiles2$X, LonWardProfiles2$Y), 
+                adapt=GWRbandwidth,  # 将adapt设置为最佳带宽
+                #matrix output
+                hatmatrix=TRUE,
+                #standard error
+                se.fit=TRUE)
+
+#print the results of the model
+gwr.model
 ```
 
 ```{r}
-
+# 从 gwr.model 中提取系数，将其转换为普通数据框（results）
+results <- as.data.frame(gwr.model$SDF) 
+names(results)
 ```
 
 ```{r}
+# 附加系数到原始数据框
 
+LonWardProfiles2 <- LonWardProfiles %>%
+  mutate(coefUnauthAbs = results$unauthorised_absence_in_all_schools_percent_2013,
+         coefHousePrice = results$log.median_house_price_2014.,
+         coefJSA = rate_of_job_seekers_allowance_jsa_claimants_2015,
+         coefLev4Qual = percent_with_level_4_qualifications_and_above_2011)
 ```
 
 ```{r}
+# 可视化未经批准的缺课百分比的GWR回归系数
+tm_shape(LonWardProfiles2) +
+  tm_polygons(col = "coefUnauthAbs", 
+              palette = "RdBu", 
+              alpha = 0.5)
+```
+对于伦敦的大多数行政区来说，存在着我们预期的负相关关系 - 即非法缺课率上升，考试成绩下降
+然而，对于三个行政区这种关系是正相关的 - 随着非法缺课率的增加，平均 GCSE 分数也会增加
+```{r}
+# 对 GWR 模型的系数进行显著性检验
+# 回归系数表示变量对目标变量的影响程度和方向
+sigTest = abs(gwr.model$SDF$"log(median_house_price_2014)")-2 * gwr.model$SDF$"log(median_house_price_2014)_se"
 
+
+#store significance results
+LonWardProfiles2 <- LonWardProfiles2 %>%
+  mutate(GWRUnauthSig = sigTest)
 ```
 
 ```{r}
-
-```
-
-```{r}
-
+# 可视化
+tm_shape(LonWardProfiles2) +
+  tm_polygons(col = "GWRUnauthSig", 
+              palette = "RdYlBu")
 ```
